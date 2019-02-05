@@ -1,5 +1,6 @@
 import datetime
 import os
+import string
 from random import randint
 from time import sleep
 
@@ -43,28 +44,34 @@ def create_headline(text_model, max_chars=60):
 
 # Google search image based on query
 def search_image(api, cse_id, query):
-    print(str(datetime.datetime.now()) + " Searching image...")
-    try:
-        res = api.cse().list(cx=cse_id, q=query, fileType='gif png jpg', imgSize='medium', num=5,
-                             rights='cc_publicdomain', safe='active', searchType='image').execute()
-        image_url = res['items'][0]['link']
-        print(str(datetime.datetime.now()) + " Image: " + image_url)
-        return image_url
-    except KeyError:
+    print(str(datetime.datetime.now()) + " Searching image for '" + query + "'...")
+    res = api.cse().list(cx=cse_id, q=query, fileType='gif png jpg', num=10, safe='active', searchType='image')\
+        .execute()
+
+    if 'items' in res:
+        for i, img in enumerate(res['items']):
+            try:
+                image_url = res['items'][i]['link']
+                print(str(datetime.datetime.now()) + " Image: " + image_url)
+                return image_url  # return first link that's found
+            except KeyError:
+                print("Image " + str(i) + " has no image link in search response.")
+        print("No image found")
         return ""
 
 
+#  Post basic tweet (without image)
 def tweet_basic(api, tweet_msg):
     api.PostUpdate(tweet_msg)
     print(str(datetime.datetime.now()) + " Tweet success")
 
 
-# Posts tweet with image
+# Post tweet with image
 def tweet_fake_buzz(api, tweet_msg, image_link):
-    if image_link == "":
+    if not image_link:
         tweet_basic(api, tweet_msg)
     else:
-        extension = image_link[image_link.rindex('.'):len(image_link)]  # get the extension of this image
+        extension = image_link[image_link.rindex('.'):len(image_link)]  # get the extension of this image file
         filename = 'temp' + extension
         try:
             request = requests.get(image_link, stream=True)  # save the file temporarily
@@ -73,11 +80,12 @@ def tweet_fake_buzz(api, tweet_msg, image_link):
                     for chunk in request:
                         image_link.write(chunk)
                 api.PostUpdate(status=tweet_msg, media=filename)  # tweet with image
-                os.remove(filename)
+                os.remove(filename)  # delete image file after tweeting
             else:
-                print("Unable to download image")
-                api.PostUpdate(tweet_msg)  # simple tweet
+                print("Failed to download image: " + image_link)
+                tweet_basic(api, tweet_msg)
         except IOError:
+            print("Failed to download image: " + image_link)
             tweet_basic(api, tweet_msg)
 
 
@@ -94,27 +102,34 @@ def main():
     # create markov chain model
     model = markov_chain_setup("clickbait_data")
 
-    # tweet every hour
     while True:
-        tweet = create_headline(model, randint(30, 100))
+        tweet = create_headline(model, randint(40, 100))
 
-        # identify key words in tweet to use for searching accompanying image using part of speech tags
-        # key words include singular nouns and plural nouns
+        image_link = search_image(google_api, cse_id, tweet)  # search for image
+
+        # identify key words in tweet to use for hashtags using part of speech tags
+        # key words include nouns
         tokens = nltk.word_tokenize(str(tweet))
         tags = nltk.pos_tag(tokens)
-        key_words_list = [word for word, pos in tags if (pos.startswith('N'))]
+        keywords_list = [word for word, pos in tags if (pos.startswith('N'))]
 
-        # add key words as hash tags
-        tweet += " #" + ''.join(key_words_list)
+        # add question mark punctuation for interrogative headlines
+        interrogative = ['Does', 'Do', 'Can', 'Should', 'Would', 'Could', 'How', 'Which']
+        if tokens[0] in interrogative:
+            tweet += "?"
+
+        # add key words as hash tags, removing any punctuations in the hashtags
+        if keywords_list:
+            hashtag = ''.join(keywords_list).translate(str.maketrans('', '', string.punctuation))
+            tweet += " #" + hashtag
         print(str(datetime.datetime.now()) + " Tweet: " + tweet)
 
-        image_link = search_image(google_api, cse_id, ' '.join(key_words_list))  # search for image
+        # post to twitter
+        tweet_fake_buzz(twitter_api, tweet, image_link)
 
-        tweet_fake_buzz(twitter_api, tweet, image_link)  # tweet
+        print(str(datetime.datetime.now()) + " Success.")
 
-        print(str(datetime.datetime.now()) + " Done.")
-
-        sleep(3600)
+        sleep(3600)  # tweet every hour
 
 
 if __name__ == "__main__":
