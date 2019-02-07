@@ -42,7 +42,7 @@ def markov_chain_setup(file_path):
             text = text.replace("\n\n", "\n")  # remove extra newline
 
         # build the model
-        text_model = markovify.NewlineText(text)
+        text_model = markovify.NewlineText(text, state_size=4)
         return text_model
     except IOError:
         print("Failed to read corpus file: " + file_path)
@@ -97,11 +97,14 @@ def tweet_basic(api, tweet_msg):
 
 # Post tweet with image
 def tweet_fake_buzz(api, tweet_msg, image_file):
-    if not image_file:
-        tweet_basic(api, tweet_msg)
-    else:
-        api.PostUpdate(status=tweet_msg, media=image_file)  # tweet with image
-        os.remove(image_file)  # delete image file after tweeting
+    try:
+        if not image_file:
+            tweet_basic(api, tweet_msg)
+        else:
+            api.PostUpdate(status=tweet_msg, media=image_file)  # tweet with image
+            os.remove(image_file)  # delete image file after tweeting
+    except twitter.TwitterError:
+        print(str(datetime.datetime.now()) + " Twitter API error")
 
 
 def main():
@@ -123,7 +126,9 @@ def main():
     cse_id = config.get('GOOGLE', 'CSE_ID')
 
     # create markov chain model
-    model = markov_chain_setup("clickbait_data_filtered.txt")
+    model_clickbait = markov_chain_setup("clickbait_data_filtered.txt")
+    model_non_clickbait = markov_chain_setup("non_clickbait_data_filtered.txt")
+    model = markovify.combine([model_clickbait, model_non_clickbait], [1.60, 1])
 
     # set nltk path
     if './nltk_data' not in nltk.data.path:
@@ -132,47 +137,47 @@ def main():
     while True:
         # create headline
         tweet = create_headline(model, randint(40, 180))
-        print(str(datetime.datetime.now()) + " Headline: " + tweet)
-
-        # tokenized headline
-        tokens = nltk.word_tokenize(str(tweet))
-
-        # add question mark punctuation for interrogative headlines
-        interrogative = ['Does', 'Do', 'Can', 'Should', 'Would', 'Could', 'How', 'Which', "Is", "Are", "Was"]
-        if tokens[0] in interrogative:
-            tweet += "?"
-
-        # identify key words in tweet to use for hashtags using parts-of-speech tags
-        # nouns only, tagger isn't accurate so remove helping verbs
-        verbs = ["am", "are", "is", "was", "were", "be", "being", "been", "have", "has", "had", "shall", "will",
-                 "do", "does", "did", "may", "must", "might", "can", "could", "would", "should", "who", "what", "why",
-                 "your", "you", "their"]
-        tags = nltk.pos_tag(tokens)
-        keywords_list = [word for word, pos in tags if (pos.startswith('N') and word.lower() not in verbs)]
-
-        print(str(datetime.datetime.now()) + " Identified key words: " + str(keywords_list))
-
-        # add key words as hash tags, removing any punctuations in the hashtags
-        if 0 <= len(keywords_list) <= 3:
-            hashtag = (''.join(keywords_list)).translate(str.maketrans('', '', string.punctuation))
-            tweet += " #" + hashtag
+        if tweet is None:
+            print(str(datetime.datetime.now()) + " Markov chain model failed to generate a tweet.")
         else:
-            ht_set_one = (keywords_list[0] + keywords_list[1]).translate(str.maketrans('', '', string.punctuation))
-            ht_set_two = (keywords_list[-2] + keywords_list[-1]).translate(str.maketrans('', '', string.punctuation))
-            tweet += " #" + ht_set_one + " #" + ht_set_two
+            print(str(datetime.datetime.now()) + " Headline: " + tweet)
 
-        # full tweet
-        print(str(datetime.datetime.now()) + " Tweet: " + tweet)
+            # tokenized headline
+            tokens = nltk.word_tokenize(str(tweet))
 
-        # search for image to post with tweet message
-        image = search_image(google_api, cse_id, ' '.join(keywords_list))
+            # add question mark punctuation for interrogative headlines
+            interrogative = ['Does', 'Do', 'Can', 'Should', 'Would', 'Could', 'How', 'Which', "Is", "Are", "Was"]
+            if tokens[0] in interrogative:
+                tweet += "?"
 
-        # post to twitter
-        tweet_fake_buzz(twitter_api, tweet, image)
+            # identify key words in tweet to use for hashtags using parts-of-speech tags
+            # nouns only, tagger isn't accurate so remove helping verbs
+            verbs = ["am", "are", "is", "was", "were", "be", "being", "been", "have", "has", "had", "shall", "will",
+                     "do", "does", "did", "may", "must", "might", "can", "could", "would", "should", "who", "what",
+                     "why", "your", "you", "their", "or"]
+            tags = nltk.pos_tag(tokens)
+            keywords_list = [word for word, pos in tags if (pos.startswith('N') and word.lower() not in verbs)]
+            query_words = [word for word, pos in tags if (pos.startswith('N') or pos.startswith('J'))]
 
-        print(str(datetime.datetime.now()) + " Done.")
+            print(str(datetime.datetime.now()) + " Identified key words: " + str(keywords_list))
+            print(str(datetime.datetime.now()) + " Identified query words: " + str(query_words))
 
-        sleep(300)  # tweet every 5 minutes
+            # add key words as hash tags, removing any punctuations in the hashtags
+            for kw in keywords_list:
+                tweet += " #" + kw.translate(str.maketrans('', '', string.punctuation))
+
+            # full tweet
+            print(str(datetime.datetime.now()) + " Tweet: " + tweet)
+
+            # search for image to post with tweet message
+            image = search_image(google_api, cse_id, ' '.join(query_words))
+
+            # post to twitter
+            tweet_fake_buzz(twitter_api, tweet, image)
+
+            print(str(datetime.datetime.now()) + " Done.")
+
+            sleep(300)  # tweet every 5 minutes
 
 
 if __name__ == "__main__":
