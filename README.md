@@ -1,4 +1,4 @@
-#### Fake Buzz Twitter Bot
+#### Clickbait Headlines Twitter Bot
 Tweets fake clickbait headlines every 5 minutes. Key words are identified in the generated tweet and are used to search 
 for an image to be posted along with the tweet.
 
